@@ -15,7 +15,7 @@ logs.log_to_tmp_folder()
 
 
 async def main():
-  app_name = "hello_doctor_app"
+  app_name = "hello_doctor"
   user_id = "user1"
 
   session_service = InMemorySessionService()

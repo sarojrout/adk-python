@@ -41,8 +41,12 @@ def summarize_risk_profile(tool_context: ToolContext) -> str:
       "severe bleeding",
       "suicidal",
   )
-  lower_answers = " ".join(a["answer"].lower() for a in answers)
-  has_concerning = any(k in lower_answers for k in concerning_keywords)
+  has_concerning = False
+  for answer in answers:
+    text = str(answer.get("answer", "")).lower()
+    if any(keyword in text for keyword in concerning_keywords):
+      has_concerning = True
+      break
 
   risk_level = "low-to-moderate"
   if has_concerning:
