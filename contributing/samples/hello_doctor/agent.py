@@ -75,7 +75,7 @@ def summarize_risk_profile(tool_context: ToolContext) -> str:
 
 
 root_agent = Agent(
-    model="gemini-2.0-flash",
+    model="gemini-2.5-flash",
     name="ai_doctor_agent",
     description=(
         "A simple AI doctor-style assistant for educational purposes. "
