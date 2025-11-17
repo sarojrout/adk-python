@@ -591,7 +591,9 @@ class BaseAgent(BaseModel):
         seen_names.add(name)
 
     if duplicates:
-      duplicate_names_str = ', '.join(f'`{name}`' for name in duplicates)
+      duplicate_names_str = ', '.join(
+          f'`{name}`' for name in sorted(set(duplicates))
+      )
       raise ValueError(
           f'Found duplicate sub-agent names: {duplicate_names_str}. '
           'All sub-agents must have unique names.'

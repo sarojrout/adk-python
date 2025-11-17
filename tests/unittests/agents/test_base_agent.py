@@ -891,8 +891,38 @@ def test_validate_sub_agents_unique_names_multiple_duplicates(
     )
 
   error_message = str(exc_info.value)
+  # Verify each duplicate name appears exactly once in the error message
+  assert error_message.count(duplicate_name_1) == 1
+  assert error_message.count(duplicate_name_2) == 1
+  # Verify both duplicate names are present
   assert duplicate_name_1 in error_message
   assert duplicate_name_2 in error_message
+
+
+def test_validate_sub_agents_unique_names_triple_duplicate(
+    request: pytest.FixtureRequest,
+):
+  """Test that a name appearing three times is reported only once."""
+  duplicate_name = f'{request.function.__name__}_triple_duplicate'
+
+  sub_agents = [
+      _TestingAgent(name=duplicate_name),
+      _TestingAgent(name=f'{request.function.__name__}_unique'),
+      _TestingAgent(name=duplicate_name),  # Second occurrence
+      _TestingAgent(name=duplicate_name),  # Third occurrence
+  ]
+
+  with pytest.raises(ValueError) as exc_info:
+    _ = _TestingAgent(
+        name=f'{request.function.__name__}_parent',
+        sub_agents=sub_agents,
+    )
+
+  error_message = str(exc_info.value)
+  # Verify the duplicate name appears exactly once in the error message
+  # (not three times even though it appears three times in the list)
+  assert error_message.count(duplicate_name) == 1
+  assert duplicate_name in error_message
 
 
 def test_validate_sub_agents_unique_names_no_duplicates(
