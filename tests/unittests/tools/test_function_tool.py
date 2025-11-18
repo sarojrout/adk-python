@@ -428,3 +428,22 @@ async def test_run_async_parameter_filtering(mock_tool_context):
   assert result == {"arg1": "test", "arg2": 42}
   # Explicitly verify that unexpected_param was filtered out and not passed to the function
   assert "unexpected_param" not in result
+
+
+@pytest.mark.asyncio
+async def test_run_async_with_large_integer_strings(mock_tool_context):
+  """Test that large integers provided as strings are converted losslessly."""
+
+  def add_numbers(a: int, b: int) -> int:
+    return a + b
+
+  tool = FunctionTool(add_numbers)
+  result = await tool.run_async(
+      args={
+          "a": "10000000000000001",
+          "b": "123456789",
+      },
+      tool_context=mock_tool_context,
+  )
+
+  assert result == 10000000123456790

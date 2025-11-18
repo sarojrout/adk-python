@@ -48,6 +48,8 @@ _py_builtin_type_to_schema_type = {
 
 logger = logging.getLogger('google_adk.' + __name__)
 
+_INTEGER_STRING_PATTERN = r'^-?\d+$'
+
 
 def _handle_params_as_deferred_annotations(
     param: inspect.Parameter, annotation_under_future: dict[str, Any], name: str
@@ -231,7 +233,7 @@ def _parse_schema_from_parameter(
       schema.default = param.default
     schema.type = _py_builtin_type_to_schema_type[param.annotation]
     _raise_if_schema_unsupported(variant, schema)
-    return schema
+    return _sanitize_integer_schema_for_variant(schema, variant)
   if isinstance(param.annotation, type) and issubclass(param.annotation, Enum):
     schema.type = types.Type.STRING
     schema.enum = [e.value for e in param.annotation]
@@ -245,7 +247,7 @@ def _parse_schema_from_parameter(
         raise ValueError(default_value_error_msg)
       schema.default = default_value
     _raise_if_schema_unsupported(variant, schema)
-    return schema
+    return _sanitize_integer_schema_for_variant(schema, variant)
   if (
       get_origin(param.annotation) is Union
       # only parse simple UnionType, example int | str | float | bool
@@ -286,7 +288,7 @@ def _parse_schema_from_parameter(
         raise ValueError(default_value_error_msg)
       schema.default = param.default
     _raise_if_schema_unsupported(variant, schema)
-    return schema
+    return _sanitize_integer_schema_for_variant(schema, variant)
   if isinstance(param.annotation, _GenericAlias) or isinstance(
       param.annotation, typing_types.GenericAlias
   ):
@@ -299,7 +301,7 @@ def _parse_schema_from_parameter(
           raise ValueError(default_value_error_msg)
         schema.default = param.default
       _raise_if_schema_unsupported(variant, schema)
-      return schema
+      return _sanitize_integer_schema_for_variant(schema, variant)
     if origin is Literal:
       if not all(isinstance(arg, str) for arg in args):
         raise ValueError(
@@ -312,7 +314,7 @@ def _parse_schema_from_parameter(
           raise ValueError(default_value_error_msg)
         schema.default = param.default
       _raise_if_schema_unsupported(variant, schema)
-      return schema
+      return _sanitize_integer_schema_for_variant(schema, variant)
     if origin is list:
       schema.type = types.Type.ARRAY
       schema.items = _parse_schema_from_parameter(
@@ -329,7 +331,7 @@ def _parse_schema_from_parameter(
           raise ValueError(default_value_error_msg)
         schema.default = param.default
       _raise_if_schema_unsupported(variant, schema)
-      return schema
+      return _sanitize_integer_schema_for_variant(schema, variant)
     if origin is Union:
       schema.any_of = []
       schema.type = types.Type.OBJECT
@@ -375,7 +377,7 @@ def _parse_schema_from_parameter(
           raise ValueError(default_value_error_msg)
         schema.default = param.default
       _raise_if_schema_unsupported(variant, schema)
-      return schema
+      return _sanitize_integer_schema_for_variant(schema, variant)
       # all other generic alias will be invoked in raise branch
   if (
       inspect.isclass(param.annotation)
@@ -400,7 +402,7 @@ def _parse_schema_from_parameter(
           func_name,
       )
     _raise_if_schema_unsupported(variant, schema)
-    return schema
+    return _sanitize_integer_schema_for_variant(schema, variant)
   if inspect.isclass(param.annotation) and issubclass(
       param.annotation, ToolContext
   ):
@@ -414,7 +416,7 @@ def _parse_schema_from_parameter(
     schema.type = types.Type.OBJECT
     schema.nullable = True
     _raise_if_schema_unsupported(variant, schema)
-    return schema
+    return _sanitize_integer_schema_for_variant(schema, variant)
   raise ValueError(
       f'Failed to parse the parameter {param} of function {func_name} for'
       ' automatic function calling. Automatic function calling works best with'
@@ -431,3 +433,42 @@ def _get_required_fields(schema: types.Schema) -> list[str]:
       for field_name, field_schema in schema.properties.items()
       if not field_schema.nullable and field_schema.default is None
   ]
+
+
+def _sanitize_integer_schema_for_variant(
+    schema: types.Schema, variant: GoogleLLMVariant
+) -> types.Schema:
+  if variant != GoogleLLMVariant.GEMINI_API:
+    return schema
+
+  _convert_integer_schema_to_string(schema)
+  return schema
+
+
+def _convert_integer_schema_to_string(schema: types.Schema | None) -> None:
+  if schema is None:
+    return
+
+  if schema.type == types.Type.INTEGER:
+    schema.type = types.Type.STRING
+    if schema.pattern is None:
+      schema.pattern = _INTEGER_STRING_PATTERN
+    if schema.default is not None and not isinstance(schema.default, str):
+      schema.default = str(schema.default)
+    if schema.enum:
+      schema.enum = [str(enum_value) for enum_value in schema.enum]
+
+  if schema.properties:
+    for property_schema in schema.properties.values():
+      _convert_integer_schema_to_string(property_schema)
+
+  if schema.items:
+    _convert_integer_schema_to_string(schema.items)
+
+  if schema.any_of:
+    for nested_schema in schema.any_of:
+      _convert_integer_schema_to_string(nested_schema)
+
+  additional_properties = schema.additional_properties
+  if isinstance(additional_properties, types.Schema):
+    _convert_integer_schema_to_string(additional_properties)

@@ -14,8 +14,11 @@
 
 from __future__ import annotations
 
+import decimal
 import inspect
 import logging
+import math
+import re
 from typing import Any
 from typing import Callable
 from typing import get_args
@@ -33,6 +36,8 @@ from .base_tool import BaseTool
 from .tool_context import ToolContext
 
 logger = logging.getLogger('google_adk.' + __name__)
+
+_INTEGER_STRING_REGEX = re.compile(r'^[-+]?\d+$')
 
 
 class FunctionTool(BaseTool):
@@ -151,7 +156,57 @@ class FunctionTool(BaseTool):
               # Keep the original value if conversion fails
               pass
 
+        if param_name in converted_args:
+          converted_args[param_name] = self._maybe_convert_builtin_value(
+              converted_args[param_name], target_type
+          )
+
     return converted_args
+
+  def _maybe_convert_builtin_value(self, value: Any, target_type: Any) -> Any:
+    if target_type is inspect.Parameter.empty:
+      return value
+
+    if target_type is int:
+      return self._convert_to_int_value(value)
+
+    return value
+
+  @staticmethod
+  def _convert_to_int_value(value: Any) -> Any:
+    if value is None or isinstance(value, bool):
+      return value
+
+    if isinstance(value, int):
+      return value
+
+    if isinstance(value, str):
+      trimmed_value = value.strip()
+      if _INTEGER_STRING_REGEX.match(trimmed_value):
+        try:
+          return int(trimmed_value)
+        except ValueError:
+          return value
+      return value
+
+    if isinstance(value, decimal.Decimal):
+      try:
+        integral_value = value.to_integral_value()
+      except (decimal.InvalidOperation, ValueError):
+        return value
+      if integral_value == value:
+        try:
+          return int(integral_value)
+        except (ValueError, OverflowError):
+          return value
+      return value
+
+    if isinstance(value, float):
+      if math.isfinite(value) and value.is_integer():
+        return int(value)
+      return value
+
+    return value
 
   @override
   async def run_async(

@@ -153,6 +153,23 @@ def test_from_function_with_options_int_return_vertex():
   assert declaration.response.type == types.Type.INTEGER
 
 
+def test_from_function_with_options_int_parameter_gemini():
+  """Test that GEMINI int parameters are represented as strings."""
+
+  def test_function(count: int) -> None:
+    """A test function with an integer parameter."""
+    _ = count
+
+  declaration = _automatic_function_calling_util.from_function_with_options(
+      test_function, GoogleLLMVariant.GEMINI_API
+  )
+
+  assert declaration.parameters is not None
+  param_schema = declaration.parameters.properties['count']
+  assert param_schema.type == types.Type.STRING
+  assert param_schema.pattern == '^-?\\d+$'
+
+
 def test_from_function_with_options_any_annotation_vertex():
   """Test from_function_with_options with Any type annotation for VERTEX_AI."""
 
