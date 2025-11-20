@@ -581,18 +581,18 @@ class BaseAgent(BaseModel):
       return value
 
     seen_names: set[str] = set()
-    duplicates: list[str] = []
+    duplicates: set[str] = set()
 
     for sub_agent in value:
       name = sub_agent.name
       if name in seen_names:
-        duplicates.append(name)
+        duplicates.add(name)
       else:
         seen_names.add(name)
 
     if duplicates:
       duplicate_names_str = ', '.join(
-          f'`{name}`' for name in sorted(set(duplicates))
+          f'`{name}`' for name in sorted(duplicates)
       )
       raise ValueError(
           f'Found duplicate sub-agent names: {duplicate_names_str}. '
