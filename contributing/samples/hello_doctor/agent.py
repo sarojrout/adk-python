@@ -16,7 +16,9 @@ from google.adk import Agent
 from google.adk.tools.tool_context import ToolContext
 
 
-def log_health_answer(question: str, answer: str, tool_context: ToolContext) -> str:
+def log_health_answer(
+    question: str, answer: str, tool_context: ToolContext
+) -> str:
   """Log a structured health answer into session state.
 
   The model can call this tool after it asks a question such as

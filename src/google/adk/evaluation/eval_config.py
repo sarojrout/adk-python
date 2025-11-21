@@ -19,6 +19,7 @@ import os
 from typing import Optional
 from typing import Union
 
+from pydantic import ValidationError
 from pydantic import alias_generators
 from pydantic import BaseModel
 from pydantic import ConfigDict
@@ -93,7 +94,20 @@ def get_evaluation_criteria_or_default(
   if eval_config_file_path and os.path.exists(eval_config_file_path):
     with open(eval_config_file_path, "r", encoding="utf-8") as f:
       content = f.read()
-      return EvalConfig.model_validate_json(content)
+      if not content or not content.strip():
+        logger.warning(
+            f"Config file {eval_config_file_path} exists but is empty. "
+            "Using default criteria."
+        )
+        return _DEFAULT_EVAL_CONFIG
+      try:
+        return EvalConfig.model_validate_json(content)
+      except (ValidationError, ValueError) as e:
+        logger.warning(
+            f"Failed to parse config file {eval_config_file_path}: {e}. "
+            "Using default criteria."
+        )
+        return _DEFAULT_EVAL_CONFIG
 
   logger.info(
       "No config file supplied or file not found. Using default criteria."

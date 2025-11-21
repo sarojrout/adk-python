@@ -46,6 +46,16 @@ def test_get_evaluation_criteria_or_default_returns_default_if_file_not_found(
   )
 
 
+def test_get_evaluation_criteria_or_default_returns_default_if_file_is_empty(
+    mocker,
+):
+  mocker.patch("os.path.exists", return_value=True)
+  mocker.patch("builtins.open", mocker.mock_open(read_data=""))
+  assert (
+      get_evaluation_criteria_or_default("dummy_path") == _DEFAULT_EVAL_CONFIG
+  )
+
+
 def test_get_eval_metrics_from_config():
   rubric_1 = Rubric(
       rubric_id="test-rubric",
