@@ -565,7 +565,9 @@ class BaseAgent(BaseModel):
 
   @field_validator('sub_agents', mode='after')
   @classmethod
-  def validate_sub_agents_unique_names(cls, value: list[BaseAgent]) -> list[BaseAgent]:
+  def validate_sub_agents_unique_names(
+      cls, value: list[BaseAgent]
+  ) -> list[BaseAgent]:
     """Validates that all sub-agents have unique names.
 
     Args:
