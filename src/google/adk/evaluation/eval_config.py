@@ -19,11 +19,11 @@ import os
 from typing import Optional
 from typing import Union
 
-from pydantic import ValidationError
 from pydantic import alias_generators
 from pydantic import BaseModel
 from pydantic import ConfigDict
 from pydantic import Field
+from pydantic import ValidationError
 
 from ..evaluation.eval_metrics import EvalMetric
 from .eval_metrics import BaseCriterion
