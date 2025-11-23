@@ -76,6 +76,15 @@ def _is_image_part(part: types.Part) -> bool:
   )
 
 
+def _is_pdf_part(part: types.Part) -> bool:
+  """Check if the part contains PDF data."""
+  return (
+      part.inline_data
+      and part.inline_data.mime_type
+      and part.inline_data.mime_type == "application/pdf"
+  )
+
+
 def part_to_message_block(
     part: types.Part,
 ) -> Union[
@@ -83,6 +92,7 @@ def part_to_message_block(
     anthropic_types.ImageBlockParam,
     anthropic_types.ToolUseBlockParam,
     anthropic_types.ToolResultBlockParam,
+    dict[str, Any],  # For PDF document blocks
 ]:
   if part.text:
     return anthropic_types.TextBlockParam(text=part.text, type="text")
@@ -130,6 +140,19 @@ def part_to_message_block(
     data = base64.b64encode(part.inline_data.data).decode()
     return anthropic_types.ImageBlockParam(
         type="image",
+        source=dict(
+            type="base64", media_type=part.inline_data.mime_type, data=data
+        ),
+    )
+  elif _is_pdf_part(part):
+    # Handle PDF documents - Anthropic supports PDFs as document blocks
+    # PDFs are encoded as base64 and sent with document type
+    data = base64.b64encode(part.inline_data.data).decode()
+    # Anthropic API supports PDFs using document block structure
+    # Construct document block similar to image block but with document type
+    # Note: Anthropic accepts PDFs with type "document" in the block structure
+    return dict(
+        type="document",
         source=dict(
             type="base64", media_type=part.inline_data.mime_type, data=data
         ),
