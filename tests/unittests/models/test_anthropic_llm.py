@@ -468,6 +468,7 @@ def test_part_to_message_block_with_pdf():
   """Test that part_to_message_block handles PDF documents."""
   import base64
 
+  from anthropic import types as anthropic_types
   from google.adk.models.anthropic_llm import part_to_message_block
 
   # Create a PDF part with inline data
@@ -484,12 +485,13 @@ def test_part_to_message_block_with_pdf():
 
   result = part_to_message_block(pdf_part)
 
-  # PDF should be returned as a document block dictionary
+  # PDF should be returned as DocumentBlockParam (TypedDict, which is a dict)
   assert isinstance(result, dict)
+  # Verify it matches DocumentBlockParam structure
   assert result["type"] == "document"
   assert "source" in result
   assert result["source"]["type"] == "base64"
   assert result["source"]["media_type"] == "application/pdf"
-  # Verify the data is base64 encoded
+  # Verify the data is base64 encoded and can be decoded back
   decoded_data = base64.b64decode(result["source"]["data"])
   assert decoded_data == pdf_data

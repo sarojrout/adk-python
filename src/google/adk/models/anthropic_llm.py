@@ -26,7 +26,6 @@ from typing import Iterable
 from typing import Literal
 from typing import Optional
 from typing import TYPE_CHECKING
-from typing import TypedDict
 from typing import Union
 
 from anthropic import AnthropicVertex
@@ -86,21 +85,6 @@ def _is_pdf_part(part: types.Part) -> bool:
   )
 
 
-class DocumentBlockParam(TypedDict):
-  """Type definition for Anthropic document block parameters.
-
-  Represents a PDF document block in Anthropic's message format.
-  This TypedDict provides type safety for document blocks when
-  DocumentBlockParam is not available in the anthropic_types module.
-
-  The structure matches Anthropic's API specification for document blocks,
-  similar to ImageBlockParam but with type="document".
-  """
-
-  type: Literal["document"]
-  source: dict[str, str]  # Contains: type, media_type, data
-
-
 def part_to_message_block(
     part: types.Part,
 ) -> Union[
@@ -108,7 +92,7 @@ def part_to_message_block(
     anthropic_types.ImageBlockParam,
     anthropic_types.ToolUseBlockParam,
     anthropic_types.ToolResultBlockParam,
-    DocumentBlockParam,  # For PDF document blocks
+    anthropic_types.DocumentBlockParam,  # For PDF document blocks
 ]:
   if part.text:
     return anthropic_types.TextBlockParam(text=part.text, type="text")
@@ -164,28 +148,14 @@ def part_to_message_block(
     # Handle PDF documents - Anthropic supports PDFs as document blocks
     # PDFs are encoded as base64 and sent with document type
     data = base64.b64encode(part.inline_data.data).decode()
-    # Check if DocumentBlockParam is available in anthropic_types
-    # If available, use it for better type safety; otherwise use our TypedDict
-    if hasattr(anthropic_types, "DocumentBlockParam"):
-      return anthropic_types.DocumentBlockParam(
-          type="document",
-          source={
-              "type": "base64",
-              "media_type": part.inline_data.mime_type,
-              "data": data,
-          },
-      )
-    else:
-      # Fallback to TypedDict for type safety when DocumentBlockParam
-      # is not available in the anthropic library version
-      return DocumentBlockParam(
-          type="document",
-          source={
-              "type": "base64",
-              "media_type": part.inline_data.mime_type,
-              "data": data,
-          },
-      )
+    return anthropic_types.DocumentBlockParam(
+        type="document",
+        source={
+            "type": "base64",
+            "media_type": part.inline_data.mime_type,
+            "data": data,
+        },
+    )
   elif part.executable_code:
     return anthropic_types.TextBlockParam(
         type="text",
