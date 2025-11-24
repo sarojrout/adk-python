@@ -842,43 +842,24 @@ def _model_response_to_generate_content_response(
     finish_reason = first_choice.get("finish_reason", None)
 
   # Handle case where message is None or empty (valid when turn ends with
-  # tool calls only). Return empty LlmResponse instead of raising error.
-  if not message:
-    # Create empty LlmResponse with finish_reason and usage_metadata
-    # if available
+  # tool calls only). Create empty LlmResponse instead of raising error.
+  if message:
+    thought_parts = _convert_reasoning_value_to_parts(
+        _extract_reasoning_value(message)
+    )
+    llm_response = _message_to_generate_content_response(
+        message,
+        model_version=response.model,
+        thought_parts=thought_parts or None,
+    )
+  else:
+    # Create empty LlmResponse when message is None or empty
     llm_response = LlmResponse(
         content=types.Content(role="model", parts=[]),
         model_version=response.model,
     )
-    if finish_reason:
-      # If LiteLLM already provides a FinishReason enum (e.g., for Gemini), use
-      # it directly. Otherwise, map the finish_reason string to the enum.
-      if isinstance(finish_reason, types.FinishReason):
-        llm_response.finish_reason = finish_reason
-      else:
-        finish_reason_str = str(finish_reason).lower()
-        llm_response.finish_reason = _FINISH_REASON_MAPPING.get(
-            finish_reason_str, types.FinishReason.OTHER
-        )
-    if response.get("usage", None):
-      llm_response.usage_metadata = types.GenerateContentResponseUsageMetadata(
-          prompt_token_count=response["usage"].get("prompt_tokens", 0),
-          candidates_token_count=response["usage"].get("completion_tokens", 0),
-          total_token_count=response["usage"].get("total_tokens", 0),
-          cached_content_token_count=_extract_cached_prompt_tokens(
-              response["usage"]
-          ),
-      )
-    return llm_response
 
-  thought_parts = _convert_reasoning_value_to_parts(
-      _extract_reasoning_value(message)
-  )
-  llm_response = _message_to_generate_content_response(
-      message,
-      model_version=response.model,
-      thought_parts=thought_parts or None,
-  )
+  # Common logic for finish_reason and usage_metadata
   if finish_reason:
     # If LiteLLM already provides a FinishReason enum (e.g., for Gemini), use
     # it directly. Otherwise, map the finish_reason string to the enum.
