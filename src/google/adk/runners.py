@@ -145,8 +145,8 @@ class Runner:
         plugin_close_timeout: The timeout in seconds for plugin close methods.
 
     Raises:
-        ValueError: If `app` is provided along with `agent`, or if `app` is not
-          provided but either `app_name` or `agent` is missing.
+        ValueError: If `app` is provided along with `agent` or `plugins`, or if
+          `app` is not provided but either `app_name` or `agent` is missing.
     """
     self.app = app
     (
