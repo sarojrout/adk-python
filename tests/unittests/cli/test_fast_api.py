@@ -30,6 +30,7 @@ from fastapi.testclient import TestClient
 from google.adk.agents.base_agent import BaseAgent
 from google.adk.agents.run_config import RunConfig
 from google.adk.apps.app import App
+from google.adk.artifacts.base_artifact_service import ArtifactVersion
 from google.adk.cli.fast_api import get_fast_api_app
 from google.adk.evaluation.eval_case import EvalCase
 from google.adk.evaluation.eval_case import Invocation
@@ -211,48 +212,111 @@ def mock_session_service():
 def mock_artifact_service():
   """Create a mock artifact service."""
 
-  # Storage for artifacts
-  artifacts = {}
-
   class MockArtifactService:
 
+    def __init__(self):
+      self.artifacts: dict[str, list[dict[str, Any]]] = {}
+
+    def _make_key(
+        self, app_name: str, user_id: str, session_id: Optional[str], filename: str
+    ) -> str:
+      return f"{app_name}:{user_id}:{session_id}:{filename}"
+
+    def add_artifact(
+        self,
+        *,
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        filename: str,
+        artifact: types.Part,
+        custom_metadata: Optional[dict[str, Any]] = None,
+        canonical_uri: Optional[str] = None,
+        mime_type: Optional[str] = None,
+    ) -> int:
+      key = self._make_key(app_name, user_id, session_id, filename)
+      entries = self.artifacts.setdefault(key, [])
+      version = len(entries)
+      metadata = ArtifactVersion(
+          version=version,
+          canonical_uri=(
+              canonical_uri
+              or "artifact://apps/"
+              f"{app_name}/users/{user_id}/sessions/{session_id}/artifacts/"
+              f"{filename}/versions/{version}"
+          ),
+          custom_metadata=custom_metadata or {},
+      )
+      if mime_type:
+        metadata.mime_type = mime_type
+      entries.append({"artifact": artifact, "metadata": metadata})
+      return version
+
     async def load_artifact(
-        self, app_name, user_id, session_id, filename, version=None
+        self,
+        app_name,
+        user_id,
+        session_id,
+        filename,
+        version=None,
     ):
       """Load an artifact by filename."""
-      key = f"{app_name}:{user_id}:{session_id}:{filename}"
-      if key not in artifacts:
+      key = self._make_key(app_name, user_id, session_id, filename)
+      entries = self.artifacts.get(key)
+      if not entries:
         return None
 
       if version is not None:
-        # Get a specific version
-        for v in artifacts[key]:
-          if v["version"] == version:
-            return v["artifact"]
+        for entry in entries:
+          if entry["metadata"].version == version:
+            return entry["artifact"]
         return None
 
-      # Get the latest version
-      return sorted(artifacts[key], key=lambda x: x["version"])[-1]["artifact"]
+      return entries[-1]["artifact"]
 
     async def list_artifact_keys(self, app_name, user_id, session_id):
       """List artifact names for a session."""
       prefix = f"{app_name}:{user_id}:{session_id}:"
       return [
-          k.split(":")[-1] for k in artifacts.keys() if k.startswith(prefix)
+          k.split(":")[-1] for k in self.artifacts.keys() if k.startswith(prefix)
       ]
 
     async def list_versions(self, app_name, user_id, session_id, filename):
       """List versions of an artifact."""
-      key = f"{app_name}:{user_id}:{session_id}:{filename}"
-      if key not in artifacts:
+      key = self._make_key(app_name, user_id, session_id, filename)
+      entries = self.artifacts.get(key)
+      if not entries:
         return []
-      return [a["version"] for a in artifacts[key]]
+      return [entry["metadata"].version for entry in entries]
+
+    async def list_artifact_versions(
+        self, app_name, user_id, session_id, filename
+    ):
+      key = self._make_key(app_name, user_id, session_id, filename)
+      entries = self.artifacts.get(key)
+      if not entries:
+        return []
+      return [entry["metadata"] for entry in entries]
+
+    async def get_artifact_version(
+        self, app_name, user_id, session_id, filename, version=None
+    ):
+      key = self._make_key(app_name, user_id, session_id, filename)
+      entries = self.artifacts.get(key)
+      if not entries:
+        return None
+      if version is None:
+        return entries[-1]["metadata"]
+      for entry in entries:
+        if entry["metadata"].version == version:
+          return entry["metadata"]
+      return None
 
     async def delete_artifact(self, app_name, user_id, session_id, filename):
       """Delete an artifact."""
-      key = f"{app_name}:{user_id}:{session_id}:{filename}"
-      if key in artifacts:
-        del artifacts[key]
+      key = self._make_key(app_name, user_id, session_id, filename)
+      if key in self.artifacts:
+        del self.artifacts[key]
 
   return MockArtifactService()
 
@@ -808,6 +872,69 @@ def test_list_artifact_names(test_app, create_test_session):
   data = response.json()
   assert isinstance(data, list)
   logger.info(f"Listed {len(data)} artifacts")
+
+
+def test_get_artifact_version_metadata(
+    test_app, create_test_session, mock_artifact_service
+):
+  """Test retrieving metadata for a specific artifact version."""
+  info = create_test_session
+  mock_artifact_service.add_artifact(
+      app_name=info["app_name"],
+      user_id=info["user_id"],
+      session_id=info["session_id"],
+      filename="report.txt",
+      artifact=types.Part(text="hello"),
+      custom_metadata={"foo": "bar"},
+      mime_type="text/plain",
+  )
+
+  url = (
+      f"/apps/{info['app_name']}/users/{info['user_id']}/sessions/"
+      f"{info['session_id']}/artifacts/report.txt/versions/0/metadata"
+  )
+  response = test_app.get(url)
+
+  assert response.status_code == 200
+  data = response.json()
+  assert data["version"] == 0
+  assert data["customMetadata"] == {"foo": "bar"}
+  assert data["mimeType"] == "text/plain"
+
+
+def test_list_artifact_versions_metadata(
+    test_app, create_test_session, mock_artifact_service
+):
+  """Test listing metadata for all versions of an artifact."""
+  info = create_test_session
+  mock_artifact_service.add_artifact(
+      app_name=info["app_name"],
+      user_id=info["user_id"],
+      session_id=info["session_id"],
+      filename="report.txt",
+      artifact=types.Part(text="v0"),
+  )
+  mock_artifact_service.add_artifact(
+      app_name=info["app_name"],
+      user_id=info["user_id"],
+      session_id=info["session_id"],
+      filename="report.txt",
+      artifact=types.Part(text="v1"),
+      custom_metadata={"foo": "bar"},
+  )
+
+  url = (
+      f"/apps/{info['app_name']}/users/{info['user_id']}/sessions/"
+      f"{info['session_id']}/artifacts/report.txt/versions/metadata"
+  )
+  response = test_app.get(url)
+
+  assert response.status_code == 200
+  data = response.json()
+  assert isinstance(data, list)
+  assert len(data) == 2
+  assert data[1]["version"] == 1
+  assert data[1]["customMetadata"] == {"foo": "bar"}
 
 
 def test_create_eval_set(test_app, test_session_info):

@@ -61,6 +61,7 @@ from ..agents.live_request_queue import LiveRequestQueue
 from ..agents.run_config import RunConfig
 from ..agents.run_config import StreamingMode
 from ..apps.app import App
+from ..artifacts.base_artifact_service import ArtifactVersion
 from ..artifacts.base_artifact_service import BaseArtifactService
 from ..auth.credential_service.base_credential_service import BaseCredentialService
 from ..errors.already_exists_error import AlreadyExistsError
@@ -1295,6 +1296,24 @@ class AdkWebServer:
       return artifact
 
     @app.get(
+        "/apps/{app_name}/users/{user_id}/sessions/{session_id}/artifacts/{artifact_name}/versions/metadata",
+        response_model=list[ArtifactVersion],
+        response_model_exclude_none=True,
+    )
+    async def list_artifact_versions_metadata(
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        artifact_name: str,
+    ) -> list[ArtifactVersion]:
+      return await self.artifact_service.list_artifact_versions(
+          app_name=app_name,
+          user_id=user_id,
+          session_id=session_id,
+          filename=artifact_name,
+      )
+
+    @app.get(
         "/apps/{app_name}/users/{user_id}/sessions/{session_id}/artifacts/{artifact_name}/versions/{version_id}",
         response_model_exclude_none=True,
     )
@@ -1315,6 +1334,31 @@ class AdkWebServer:
       if not artifact:
         raise HTTPException(status_code=404, detail="Artifact not found")
       return artifact
+
+    @app.get(
+        "/apps/{app_name}/users/{user_id}/sessions/{session_id}/artifacts/{artifact_name}/versions/{version_id}/metadata",
+        response_model=ArtifactVersion,
+        response_model_exclude_none=True,
+    )
+    async def get_artifact_version_metadata(
+        app_name: str,
+        user_id: str,
+        session_id: str,
+        artifact_name: str,
+        version_id: int,
+    ) -> ArtifactVersion:
+      artifact_version = await self.artifact_service.get_artifact_version(
+          app_name=app_name,
+          user_id=user_id,
+          session_id=session_id,
+          filename=artifact_name,
+          version=version_id,
+      )
+      if not artifact_version:
+        raise HTTPException(
+            status_code=404, detail="Artifact version not found"
+        )
+      return artifact_version
 
     @app.get(
         "/apps/{app_name}/users/{user_id}/sessions/{session_id}/artifacts",
