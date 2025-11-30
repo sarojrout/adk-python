@@ -2612,18 +2612,16 @@ async def test_finish_reason_propagation(
 
 def test_model_response_to_generate_content_response_no_message_with_finish_reason():
   """Test response with no message but finish_reason returns empty LlmResponse.
-  
+
   This test covers issue #3618: when a turn ends with tool calls and no final
   message, we should return an empty LlmResponse instead of raising ValueError.
   """
   response = ModelResponse(
       model="test_model",
-      choices=[
-          {
-              "finish_reason": "tool_calls",
-              # message is missing/None
-          }
-      ],
+      choices=[{
+          "finish_reason": "tool_calls",
+          # message is missing/None
+      }],
       usage={
           "prompt_tokens": 10,
           "completion_tokens": 5,
@@ -2649,11 +2647,9 @@ def test_model_response_to_generate_content_response_no_message_no_finish_reason
   """Test response with no message and no finish_reason returns empty LlmResponse."""
   response = ModelResponse(
       model="test_model",
-      choices=[
-          {
-              # Both message and finish_reason are missing
-          }
-      ],
+      choices=[{
+          # Both message and finish_reason are missing
+      }],
   )
 
   llm_response = _model_response_to_generate_content_response(response)
@@ -2671,12 +2667,10 @@ def test_model_response_to_generate_content_response_empty_message_dict():
   """Test response with empty message dict returns empty LlmResponse."""
   response = ModelResponse(
       model="test_model",
-      choices=[
-          {
-              "message": {},  # Empty dict is falsy
-              "finish_reason": "stop",
-          }
-      ],
+      choices=[{
+          "message": {},  # Empty dict is falsy
+          "finish_reason": "stop",
+      }],
       usage={
           "prompt_tokens": 5,
           "completion_tokens": 3,
