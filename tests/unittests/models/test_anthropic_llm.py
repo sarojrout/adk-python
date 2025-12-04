@@ -19,7 +19,6 @@ from unittest import mock
 from anthropic import types as anthropic_types
 from google.adk import version as adk_version
 from google.adk.models import anthropic_llm
-from google.adk.models.anthropic_llm import AnthropicLlm
 from google.adk.models.anthropic_llm import Claude
 from google.adk.models.anthropic_llm import content_to_message_param
 from google.adk.models.anthropic_llm import function_declaration_to_tool_param
@@ -361,37 +360,6 @@ async def test_generate_content_async(
 
 
 @pytest.mark.asyncio
-async def test_anthropic_llm_generate_content_async(
-    llm_request, generate_content_response, generate_llm_response
-):
-  anthropic_llm_instance = AnthropicLlm(model="claude-sonnet-4-20250514")
-  with mock.patch.object(
-      anthropic_llm_instance, "_anthropic_client"
-  ) as mock_client:
-    with mock.patch.object(
-        anthropic_llm,
-        "message_to_generate_content_response",
-        return_value=generate_llm_response,
-    ):
-      # Create a mock coroutine that returns the generate_content_response.
-      async def mock_coro():
-        return generate_content_response
-
-      # Assign the coroutine to the mocked method
-      mock_client.messages.create.return_value = mock_coro()
-
-      responses = [
-          resp
-          async for resp in anthropic_llm_instance.generate_content_async(
-              llm_request, stream=False
-          )
-      ]
-      assert len(responses) == 1
-      assert isinstance(responses[0], LlmResponse)
-      assert responses[0].content.parts[0].text == "Hello, how can I help you?"
-
-
-@pytest.mark.asyncio
 async def test_generate_content_async_with_max_tokens(
     llm_request, generate_content_response, generate_llm_response
 ):
@@ -495,6 +463,39 @@ def test_part_to_message_block_with_multiple_content_items():
   assert isinstance(result, dict)
   # Multiple text items should be joined with newlines
   assert result["content"] == "First part\nSecond part"
+
+
+def test_part_to_message_block_with_pdf():
+  """Test that part_to_message_block handles PDF documents."""
+  import base64
+
+  from anthropic import types as anthropic_types
+  from google.adk.models.anthropic_llm import part_to_message_block
+
+  # Create a PDF part with inline data
+  pdf_data = (
+      b"%PDF-1.4\n1 0 obj\n<<\n/Type /Catalog\n>>\nendobj\nxref\n0"
+      b" 1\ntrailer\n<<\n/Root 1 0 R\n>>\n%%EOF"
+  )
+  pdf_part = types.Part(
+      inline_data=types.Blob(
+          mime_type="application/pdf",
+          data=pdf_data,
+      )
+  )
+
+  result = part_to_message_block(pdf_part)
+
+  # PDF should be returned as DocumentBlockParam (TypedDict, which is a dict)
+  assert isinstance(result, dict)
+  # Verify it matches DocumentBlockParam structure
+  assert result["type"] == "document"
+  assert "source" in result
+  assert result["source"]["type"] == "base64"
+  assert result["source"]["media_type"] == "application/pdf"
+  # Verify the data is base64 encoded and can be decoded back
+  decoded_data = base64.b64decode(result["source"]["data"])
+  assert decoded_data == pdf_data
 
 
 content_to_message_param_test_cases = [

@@ -28,8 +28,7 @@ from typing import Optional
 from typing import TYPE_CHECKING
 from typing import Union
 
-from anthropic import AsyncAnthropic
-from anthropic import AsyncAnthropicVertex
+from anthropic import AnthropicVertex
 from anthropic import NOT_GIVEN
 from anthropic import types as anthropic_types
 from google.genai import types
@@ -42,7 +41,7 @@ from .llm_response import LlmResponse
 if TYPE_CHECKING:
   from .llm_request import LlmRequest
 
-__all__ = ["AnthropicLlm", "Claude"]
+__all__ = ["Claude"]
 
 logger = logging.getLogger("google_adk." + __name__)
 
@@ -77,6 +76,15 @@ def _is_image_part(part: types.Part) -> bool:
   )
 
 
+def _is_pdf_part(part: types.Part) -> bool:
+  """Check if the part contains PDF data."""
+  return (
+      part.inline_data
+      and part.inline_data.mime_type
+      and part.inline_data.mime_type == "application/pdf"
+  )
+
+
 def part_to_message_block(
     part: types.Part,
 ) -> Union[
@@ -84,6 +92,7 @@ def part_to_message_block(
     anthropic_types.ImageBlockParam,
     anthropic_types.ToolUseBlockParam,
     anthropic_types.ToolResultBlockParam,
+    anthropic_types.DocumentBlockParam,  # For PDF document blocks
 ]:
   if part.text:
     return anthropic_types.TextBlockParam(text=part.text, type="text")
@@ -134,6 +143,18 @@ def part_to_message_block(
         source=dict(
             type="base64", media_type=part.inline_data.mime_type, data=data
         ),
+    )
+  elif _is_pdf_part(part):
+    # Handle PDF documents - Anthropic supports PDFs as document blocks
+    # PDFs are encoded as base64 and sent with document type
+    data = base64.b64encode(part.inline_data.data).decode()
+    return anthropic_types.DocumentBlockParam(
+        type="document",
+        source={
+            "type": "base64",
+            "media_type": part.inline_data.mime_type,
+            "data": data,
+        },
     )
   elif part.executable_code:
     return anthropic_types.TextBlockParam(
@@ -265,15 +286,15 @@ def function_declaration_to_tool_param(
   )
 
 
-class AnthropicLlm(BaseLlm):
-  """Integration with Claude models via the Anthropic API.
+class Claude(BaseLlm):
+  """Integration with Claude models served from Vertex AI.
 
   Attributes:
     model: The name of the Claude model.
     max_tokens: The maximum number of tokens to generate.
   """
 
-  model: str = "claude-sonnet-4-20250514"
+  model: str = "claude-3-5-sonnet-v2@20241022"
   max_tokens: int = 8192
 
   @classmethod
@@ -305,7 +326,7 @@ class AnthropicLlm(BaseLlm):
         else NOT_GIVEN
     )
     # TODO(b/421255973): Enable streaming for anthropic models.
-    message = await self._anthropic_client.messages.create(
+    message = self._anthropic_client.messages.create(
         model=llm_request.model,
         system=llm_request.config.system_instruction,
         messages=messages,
@@ -316,23 +337,7 @@ class AnthropicLlm(BaseLlm):
     yield message_to_generate_content_response(message)
 
   @cached_property
-  def _anthropic_client(self) -> AsyncAnthropic:
-    return AsyncAnthropic()
-
-
-class Claude(AnthropicLlm):
-  """Integration with Claude models served from Vertex AI.
-
-  Attributes:
-    model: The name of the Claude model.
-    max_tokens: The maximum number of tokens to generate.
-  """
-
-  model: str = "claude-3-5-sonnet-v2@20241022"
-
-  @cached_property
-  @override
-  def _anthropic_client(self) -> AsyncAnthropicVertex:
+  def _anthropic_client(self) -> AnthropicVertex:
     if (
         "GOOGLE_CLOUD_PROJECT" not in os.environ
         or "GOOGLE_CLOUD_LOCATION" not in os.environ
@@ -342,7 +347,7 @@ class Claude(AnthropicLlm):
           " Anthropic on Vertex."
       )
 
-    return AsyncAnthropicVertex(
+    return AnthropicVertex(
         project_id=os.environ["GOOGLE_CLOUD_PROJECT"],
         region=os.environ["GOOGLE_CLOUD_LOCATION"],
     )
