@@ -788,6 +788,204 @@ async def __call_tool_async(
   return await tool.run_async(args=args, tool_context=tool_context)
 
 
+def _is_streaming_tool(tool: BaseTool) -> bool:
+  """Checks if a tool is a streaming tool (async generator function).
+
+  Args:
+    tool: The tool to check.
+
+  Returns:
+    True if the tool's function is an async generator, False otherwise.
+  """
+  return hasattr(tool, 'func') and inspect.isasyncgenfunction(tool.func)
+
+
+async def _execute_streaming_tool_async(
+    tool: BaseTool,
+    function_args: dict[str, Any],
+    tool_context: ToolContext,
+    invocation_context: InvocationContext,
+) -> AsyncGenerator[Event, None]:
+  """Executes a streaming tool and yields Events for each intermediate result.
+
+  Args:
+    tool: The streaming tool to execute.
+    function_args: The function call arguments.
+    tool_context: The tool context.
+    invocation_context: The invocation context.
+
+  Yields:
+    Events for each intermediate result yielded by the streaming tool.
+  """
+  task = None
+  try:
+    # Run before_tool_callbacks
+    function_response = (
+        await invocation_context.plugin_manager.run_before_tool_callback(
+            tool=tool, tool_args=function_args, tool_context=tool_context
+        )
+    )
+    if function_response is not None:
+      # Plugin overrode the function response, yield it and return
+      event = __build_response_event(
+          tool, function_response, tool_context, invocation_context
+      )
+      yield event
+      return
+
+    # Create a queue to buffer results from the async generator
+    result_queue: asyncio.Queue[Optional[dict[str, Any]]] = asyncio.Queue()
+
+    # Background task to run the generator and put results in queue
+    async def _run_generator():
+      try:
+        # Get the async generator from the tool
+        agen = tool.func(**function_args)
+        async with Aclosing(agen) as gen:
+          async for result in gen:
+            await result_queue.put(result)
+        await result_queue.put(None)  # Signal completion
+      except Exception as e:
+        await result_queue.put(e)  # Signal error
+
+    task = asyncio.create_task(_run_generator())
+
+    # Track the task for cancellation
+    if invocation_context.active_streaming_tools is None:
+      invocation_context.active_streaming_tools = {}
+    invocation_context.active_streaming_tools[tool.name] = ActiveStreamingTool(
+        task=task
+    )
+
+    # Yield Events as results come in
+    while True:
+      result = await result_queue.get()
+      if result is None:
+        # Generator completed normally
+        break
+      if isinstance(result, Exception):
+        # Generator raised an exception
+        raise result
+
+      # Ensure result is a dict
+      if not isinstance(result, dict):
+        result = {'result': result}
+
+      # Create and yield Event for this intermediate result
+      event = __build_response_event(
+          tool, result, tool_context, invocation_context
+      )
+      yield event
+
+    # Clean up
+    if tool.name in invocation_context.active_streaming_tools:
+      del invocation_context.active_streaming_tools[tool.name]
+
+  except asyncio.CancelledError:
+    # Clean up on cancellation
+    if task and not task.done():
+      task.cancel()
+      try:
+        await task
+      except (asyncio.CancelledError, Exception):
+        pass
+    if tool.name in invocation_context.active_streaming_tools:
+      del invocation_context.active_streaming_tools[tool.name]
+    raise
+  except Exception as e:
+    # Handle errors
+    if tool.name in invocation_context.active_streaming_tools:
+      del invocation_context.active_streaming_tools[tool.name]
+
+    # Run error callbacks
+    error_response = (
+        await invocation_context.plugin_manager.run_on_tool_error_callback(
+            tool=tool,
+            tool_args=function_args,
+            tool_context=tool_context,
+            error=e,
+        )
+    )
+    if error_response is not None:
+      event = __build_response_event(
+          tool, error_response, tool_context, invocation_context
+      )
+      yield event
+      return
+
+    # Re-raise if no error callback handled it
+    raise
+
+
+async def handle_function_calls_async_with_streaming(
+    invocation_context: InvocationContext,
+    function_calls: list[types.FunctionCall],
+    tools_dict: dict[str, BaseTool],
+    tool_confirmation_dict: Optional[dict[str, ToolConfirmation]] = None,
+) -> AsyncGenerator[Event, None]:
+  """Handles function calls with support for streaming tools.
+
+  Separates streaming tools from regular tools, processes regular tools
+  normally, and yields Events for streaming tools as they produce results.
+
+  Args:
+    invocation_context: The invocation context.
+    function_calls: List of function calls to handle.
+    tools_dict: Dictionary of available tools.
+    tool_confirmation_dict: Optional dictionary of tool confirmations.
+
+  Yields:
+    Events for function responses, including intermediate results from
+    streaming tools.
+  """
+  from ...agents.llm_agent import LlmAgent
+
+  agent = invocation_context.agent
+
+  # Separate streaming and non-streaming tools
+  streaming_calls = []
+  regular_calls = []
+
+  for function_call in function_calls:
+    tool = tools_dict.get(function_call.name)
+    if tool and _is_streaming_tool(tool):
+      streaming_calls.append(function_call)
+    else:
+      regular_calls.append(function_call)
+
+  # Handle regular tools using existing logic
+  if regular_calls:
+    regular_event = await handle_function_call_list_async(
+        invocation_context,
+        regular_calls,
+        tools_dict,
+        filters=None,
+        tool_confirmation_dict=tool_confirmation_dict,
+    )
+    if regular_event:
+      yield regular_event
+
+  # Handle streaming tools
+  for function_call in streaming_calls:
+    tool = tools_dict[function_call.name]
+    function_args = (
+        copy.deepcopy(function_call.args) if function_call.args else {}
+    )
+
+    tool_context = _create_tool_context(
+        invocation_context,
+        function_call,
+        tool_confirmation_dict.get(function_call.id)
+        if tool_confirmation_dict
+        else None,
+    )
+
+    async for event in _execute_streaming_tool_async(
+        tool, function_args, tool_context, invocation_context
+    ):
+      yield event
+
+
 def __build_response_event(
     tool: BaseTool,
     function_result: dict[str, object],

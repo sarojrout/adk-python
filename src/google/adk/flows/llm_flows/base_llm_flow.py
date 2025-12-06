@@ -678,35 +678,85 @@ class BaseLlmFlow(ABC):
       function_call_event: Event,
       llm_request: LlmRequest,
   ) -> AsyncGenerator[Event, None]:
-    if function_response_event := await functions.handle_function_calls_async(
-        invocation_context, function_call_event, llm_request.tools_dict
-    ):
-      auth_event = functions.generate_auth_event(
-          invocation_context, function_response_event
+    function_calls = function_call_event.get_function_calls()
+    if not function_calls:
+      return
+
+    # Check if any tools are streaming tools
+    has_streaming_tools = any(
+        functions._is_streaming_tool(tool)
+        for call in function_calls
+        if (tool := llm_request.tools_dict.get(call.name))
+    )
+
+    if has_streaming_tools:
+      # Use streaming handler
+      tool_confirmation_dict = (
+          invocation_context.tool_confirmation_dict
+          if hasattr(invocation_context, 'tool_confirmation_dict')
+          else None
       )
-      if auth_event:
-        yield auth_event
-
-      tool_confirmation_event = functions.generate_request_confirmation_event(
-          invocation_context, function_call_event, function_response_event
-      )
-      if tool_confirmation_event:
-        yield tool_confirmation_event
-
-      # Always yield the function response event first
-      yield function_response_event
-
-      # Check if this is a set_model_response function response
-      if json_response := _output_schema_processor.get_structured_model_response(
-          function_response_event
+      async for event in functions.handle_function_calls_async_with_streaming(
+          invocation_context,
+          function_calls,
+          llm_request.tools_dict,
+          tool_confirmation_dict,
       ):
-        # Create and yield a final model response event
-        final_event = (
-            _output_schema_processor.create_final_model_response_event(
-                invocation_context, json_response
-            )
+        auth_event = functions.generate_auth_event(invocation_context, event)
+        if auth_event:
+          yield auth_event
+
+        tool_confirmation_event = functions.generate_request_confirmation_event(
+            invocation_context, function_call_event, event
         )
-        yield final_event
+        if tool_confirmation_event:
+          yield tool_confirmation_event
+
+        yield event
+
+        # Check if this is a set_model_response function response
+        if json_response := (
+            _output_schema_processor.get_structured_model_response(event)
+        ):
+          final_event = (
+              _output_schema_processor.create_final_model_response_event(
+                  invocation_context, json_response
+              )
+          )
+          yield final_event
+    else:
+      # Use regular handler
+      if function_response_event := await functions.handle_function_calls_async(
+          invocation_context, function_call_event, llm_request.tools_dict
+      ):
+        auth_event = functions.generate_auth_event(
+            invocation_context, function_response_event
+        )
+        if auth_event:
+          yield auth_event
+
+        tool_confirmation_event = functions.generate_request_confirmation_event(
+            invocation_context, function_call_event, function_response_event
+        )
+        if tool_confirmation_event:
+          yield tool_confirmation_event
+
+        # Always yield the function response event first
+        yield function_response_event
+
+        # Check if this is a set_model_response function response
+        if json_response := (
+            _output_schema_processor.get_structured_model_response(
+                function_response_event
+            )
+        ):
+          # Create and yield a final model response event
+          final_event = (
+              _output_schema_processor.create_final_model_response_event(
+                  invocation_context, json_response
+              )
+          )
+          yield final_event
       transfer_to_agent = function_response_event.actions.transfer_to_agent
       if transfer_to_agent:
         agent_to_run = self._get_agent_to_run(
