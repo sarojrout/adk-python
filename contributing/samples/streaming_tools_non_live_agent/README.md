@@ -13,9 +13,8 @@ This agent demonstrates streaming tools in non-live mode (run_async/SSE).
 ### With ADK Web UI
 
 ```bash
-cd /Users/usharout/projects/adk-python
-source .venv/bin/activate
-adk web contributing/samples/streaming_tools_non_live_agent
+cd contributing/samples
+adk web .
 ```
 
 Then try:
@@ -26,17 +25,15 @@ Then try:
 ### With ADK CLI
 
 ```bash
-cd /Users/usharout/projects/adk-python
-source .venv/bin/activate
-adk run contributing/samples/streaming_tools_non_live_agent
+cd contributing/samples/streaming_tools_non_live_agent
+adk run .
 ```
 
 ### With API Server (SSE)
 
 ```bash
-cd /Users/usharout/projects/adk-python
-source .venv/bin/activate
-adk api_server contributing/samples/streaming_tools_non_live_agent
+cd contributing/samples
+adk api_server .
 ```
 
 Then send a POST request to `/run_sse` with `streaming: true` to see intermediate Events.
