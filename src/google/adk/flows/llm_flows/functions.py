@@ -851,6 +851,9 @@ async def _execute_streaming_tool_async(
     task = asyncio.create_task(_run_generator())
 
     # Track the task for cancellation
+    # Initialize if None (for direct calls, e.g., in tests)
+    # Note: When called from handle_function_calls_async_with_streaming,
+    # this should already be initialized before concurrent tasks start
     if invocation_context.active_streaming_tools is None:
       invocation_context.active_streaming_tools = {}
     invocation_context.active_streaming_tools[tool.name] = ActiveStreamingTool(
@@ -909,7 +912,10 @@ async def _execute_streaming_tool_async(
     raise
   finally:
     # Clean up active_streaming_tools tracking
-    if tool.name in invocation_context.active_streaming_tools:
+    if (
+        invocation_context.active_streaming_tools
+        and tool.name in invocation_context.active_streaming_tools
+    ):
       del invocation_context.active_streaming_tools[tool.name]
 
 
@@ -921,8 +927,9 @@ async def handle_function_calls_async_with_streaming(
 ) -> AsyncGenerator[Event, None]:
   """Handles function calls with support for streaming tools.
 
-  Separates streaming tools from regular tools, processes regular tools
-  normally, and yields Events for streaming tools as they produce results.
+  Executes all tools (both regular and streaming) concurrently and yields
+  Events as they become available. This maximizes asyncio performance by
+  allowing all tools to run in parallel.
 
   Args:
     invocation_context: The invocation context.
@@ -932,8 +939,13 @@ async def handle_function_calls_async_with_streaming(
 
   Yields:
     Events for function responses, including intermediate results from
-    streaming tools.
+    streaming tools, as they become available from any tool.
   """
+  # Initialize active_streaming_tools before starting any concurrent tasks
+  # to avoid race conditions
+  if invocation_context.active_streaming_tools is None:
+    invocation_context.active_streaming_tools = {}
+
   # Separate streaming and non-streaming tools
   streaming_calls = []
   regular_calls = []
@@ -945,37 +957,74 @@ async def handle_function_calls_async_with_streaming(
     else:
       regular_calls.append(function_call)
 
-  # Handle regular tools using existing logic
+  # Queue to merge events from all concurrent tasks
+  event_queue: asyncio.Queue[Optional[Event]] = asyncio.Queue()
+  active_tasks: list[asyncio.Task] = []
+
+  # Task to handle regular tools
+  async def _handle_regular_tools():
+    if regular_calls:
+      regular_event = await handle_function_call_list_async(
+          invocation_context,
+          regular_calls,
+          tools_dict,
+          filters=None,
+          tool_confirmation_dict=tool_confirmation_dict,
+      )
+      if regular_event:
+        await event_queue.put(regular_event)
+    await event_queue.put(None)  # Signal completion
+
+  # Task to handle a single streaming tool
+  async def _handle_streaming_tool(function_call: types.FunctionCall):
+    try:
+      tool = tools_dict[function_call.name]
+      function_args = (
+          copy.deepcopy(function_call.args) if function_call.args else {}
+      )
+
+      tool_context = _create_tool_context(
+          invocation_context,
+          function_call,
+          tool_confirmation_dict.get(function_call.id)
+          if tool_confirmation_dict
+          else None,
+      )
+
+      async for event in _execute_streaming_tool_async(
+          tool, function_args, tool_context, invocation_context
+      ):
+        await event_queue.put(event)
+    finally:
+      await event_queue.put(None)  # Signal completion
+
+  # Start all tasks concurrently
   if regular_calls:
-    regular_event = await handle_function_call_list_async(
-        invocation_context,
-        regular_calls,
-        tools_dict,
-        filters=None,
-        tool_confirmation_dict=tool_confirmation_dict,
-    )
-    if regular_event:
-      yield regular_event
+    active_tasks.append(asyncio.create_task(_handle_regular_tools()))
 
-  # Handle streaming tools
   for function_call in streaming_calls:
-    tool = tools_dict[function_call.name]
-    function_args = (
-        copy.deepcopy(function_call.args) if function_call.args else {}
+    active_tasks.append(
+        asyncio.create_task(_handle_streaming_tool(function_call))
     )
 
-    tool_context = _create_tool_context(
-        invocation_context,
-        function_call,
-        tool_confirmation_dict.get(function_call.id)
-        if tool_confirmation_dict
-        else None,
-    )
+  # If no tasks, return early
+  if not active_tasks:
+    return
 
-    async for event in _execute_streaming_tool_async(
-        tool, function_args, tool_context, invocation_context
-    ):
+  # Yield events as they arrive from any task
+  completed_tasks = 0
+  total_tasks = len(active_tasks)
+
+  while completed_tasks < total_tasks:
+    event = await event_queue.get()
+    if event is None:
+      # Task completed
+      completed_tasks += 1
+    else:
       yield event
+
+  # Wait for all tasks to complete (in case of errors)
+  await asyncio.gather(*active_tasks, return_exceptions=True)
 
 
 def __build_response_event(

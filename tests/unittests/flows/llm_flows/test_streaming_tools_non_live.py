@@ -116,7 +116,7 @@ async def test_streaming_tool_with_string_results():
 
 @pytest.mark.asyncio
 async def test_streaming_tool_tracks_task_for_cancellation():
-  """Test that streaming tool tasks are tracked for cancellation."""
+  """Test that streaming tool tasks are tracked for cancellation and cleaned up."""
 
   async def long_running_task() -> AsyncGenerator[dict, None]:
     for i in range(10):
@@ -131,14 +131,17 @@ async def test_streaming_tool_tracks_task_for_cancellation():
       function_call_id='test-call-3',
   )
 
-  # Start the streaming tool
-  task = asyncio.create_task(
-      _execute_streaming_tool_async(
-          tool, {}, tool_context, invocation_context
-      ).__anext__()
-  )
+  # Start the streaming tool and consume it
+  async def consume_generator():
+    async for event in _execute_streaming_tool_async(
+        tool, {}, tool_context, invocation_context
+    ):
+      # Consume events until cancelled
+      pass
 
-  # Wait a bit
+  consume_task = asyncio.create_task(consume_generator())
+
+  # Wait a bit for the tool to start
   await asyncio.sleep(0.05)
 
   # Check that task is tracked
@@ -146,12 +149,19 @@ async def test_streaming_tool_tracks_task_for_cancellation():
   assert tool.name in invocation_context.active_streaming_tools
   assert invocation_context.active_streaming_tools[tool.name].task is not None
 
-  # Cancel and clean up
-  task.cancel()
+  # Cancel the generator consumption task
+  consume_task.cancel()
   try:
-    await task
+    await consume_task
   except asyncio.CancelledError:
     pass
+
+  # Wait a bit for cleanup to complete
+  await asyncio.sleep(0.1)
+
+  # Verify cleanup: task should be removed from active_streaming_tools
+  # The finally block in _execute_streaming_tool_async should have cleaned it up
+  assert tool.name not in invocation_context.active_streaming_tools
 
 
 @pytest.mark.asyncio
