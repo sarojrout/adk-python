@@ -877,10 +877,6 @@ async def _execute_streaming_tool_async(
       )
       yield event
 
-    # Clean up
-    if tool.name in invocation_context.active_streaming_tools:
-      del invocation_context.active_streaming_tools[tool.name]
-
   except asyncio.CancelledError:
     # Clean up on cancellation
     if task and not task.done():
@@ -889,13 +885,9 @@ async def _execute_streaming_tool_async(
         await task
       except (asyncio.CancelledError, Exception):
         pass
-    if tool.name in invocation_context.active_streaming_tools:
-      del invocation_context.active_streaming_tools[tool.name]
     raise
   except Exception as e:
     # Handle errors
-    if tool.name in invocation_context.active_streaming_tools:
-      del invocation_context.active_streaming_tools[tool.name]
 
     # Run error callbacks
     error_response = (
@@ -915,6 +907,10 @@ async def _execute_streaming_tool_async(
 
     # Re-raise if no error callback handled it
     raise
+  finally:
+    # Clean up active_streaming_tools tracking
+    if tool.name in invocation_context.active_streaming_tools:
+      del invocation_context.active_streaming_tools[tool.name]
 
 
 async def handle_function_calls_async_with_streaming(
@@ -938,10 +934,6 @@ async def handle_function_calls_async_with_streaming(
     Events for function responses, including intermediate results from
     streaming tools.
   """
-  from ...agents.llm_agent import LlmAgent
-
-  agent = invocation_context.agent
-
   # Separate streaming and non-streaming tools
   streaming_calls = []
   regular_calls = []
